@@ -33,14 +33,14 @@ tunshare exists because of that gap. It detects your VPN tunnel directly, sets u
 ### Homebrew
 
 ```bash
-brew tap Mehdi-Hp/tap
+brew tap kumamaki/tap
 brew install tunshare
 ```
 
 ### Build from source
 
 ```bash
-git clone https://github.com/Mehdi-Hp/tunshare.git
+git clone https://github.com/kumamaki/tunshare.git
 cd tunshare
 cargo build --release
 ```
