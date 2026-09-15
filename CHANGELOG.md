@@ -7,8 +7,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+- LAN `:53` resolver. Clients always query this Mac. Blocklist NXDOMAINs ads. WAN bypass sends matching names out the WAN, not the VPN. Both stay off until you toggle them.
+- Per-source Domain filters. Custom URLs add and remove in the TUI. Extra builtins default off.
+- Optional names on custom list sources.
+- Connection card shows Block, WAN bypass, and a session blocked-query count.
+- `tunshare status` live inspect, with `--check NAME`.
+
+### Changed
+- The LAN MTU knob is now Tunnel MTU. Auto probes the real path MTU for the pf MSS clamp. A fixed value uses the number you set.
+
 ### Fixed
-- MSS clamp now matches inbound LAN SYNs on the share iface. The previous `out on $ext_if from $int_if:network` rule ran after source NAT and never rewrote MSS, so fat TLS through encapsulating tunnels reset.
+- MSS clamp matches inbound LAN SYNs on the share iface, before source NAT. Fat TLS through encapsulating tunnels no longer RST.
+- Empty Hickory answers map to NODATA/NXDOMAIN, not SERVFAIL.
+- Apple `scrub-anchor` stays before tunshare NAT hooks, so MAIN `-f` does not die at line 10.
+- Sharing lives in `com.tunshare`. Health re-merges the six MAIN hooks and heals lost `route-to` without flushing the persist table.
+- Bypass lookups ask the WAN gateway on BoundIf sockets.
+- WAN ranking uses table defaults and fails closed on empty ARP. Hairpin share-LAN uplinks are skipped.
+- Geosite TLD tokens like `domain:ir` match the whole suffix.
+- WAN DNS sockets pin to the uplink with `IP_BOUND_IF`.
+- Apple pf `route-to` sits before `from`, so WAN bypass loads.
+- MSS clamp uses probed path MTU, not the tunnel's interface MTU.
 
 ## [0.3.0] - 2026-05-27
 
