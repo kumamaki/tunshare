@@ -7,6 +7,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+- MSS clamp now matches inbound LAN SYNs on the share iface. The previous `out on $ext_if from $int_if:network` rule ran after source NAT and never rewrote MSS, so fat TLS through encapsulating tunnels reset.
+
 ## [0.3.0] - 2026-05-27
 
 ## [0.2.0] - 2026-05-27

@@ -101,6 +101,10 @@ impl Firewall {
     }
 
     /// Anchor body: scrub, table, NAT, DNS rdr, filter. No MAIN hooks.
+    ///
+    /// MSS clamp is inbound on the share iface, before source NAT. A clamp
+    /// `out on $ext_if from $int_if:network` never matches: NAT has already
+    /// rewritten the source to the utun address.
     pub fn generate_rules(
         vpn_if: &str,
         lan_if: &str,
@@ -108,7 +112,7 @@ impl Firewall {
         mss: u16,
         bypass: Option<&BypassConfig>,
     ) -> String {
-        let (wan_macro, table_line, vpn_nat, extra_nat, extra_filter, wan_scrub) = match bypass {
+        let (wan_macro, table_line, vpn_nat, extra_nat, extra_filter, lan_mss_to) = match bypass {
             Some(b) => (
                 format!("wan_if = \"{}\"\nwan_gw = \"{}\"\n", b.wan_if, b.wan_gw),
                 format!("table <{BYPASS_TABLE}> persist\n"),
@@ -121,9 +125,7 @@ impl Firewall {
                 format!(
                     "pass in quick on $int_if route-to ($wan_if $wan_gw) inet from $int_if:network to <{BYPASS_TABLE}> keep state\npass out quick on $wan_if inet from ($wan_if) to any keep state\n"
                 ),
-                format!(
-                    "scrub out on $wan_if inet proto tcp from $int_if:network to any max-mss {mss}\n"
-                ),
+                format!("to ! <{BYPASS_TABLE}>"),
             ),
             None => (
                 String::new(),
@@ -132,7 +134,7 @@ impl Firewall {
                     .to_string(),
                 String::new(),
                 String::new(),
-                String::new(),
+                "to any".to_string(),
             ),
         };
 
@@ -145,8 +147,8 @@ ext_if = "{vpn_if}"
 int_if = "{lan_if}"
 {wan_macro}{table_line}
 scrub in all no-df
-scrub out on $ext_if inet proto tcp from $int_if:network to any max-mss {mss}
-{wan_scrub}
+scrub in on $int_if inet proto tcp from $int_if:network {lan_mss_to} no-df max-mss {mss}
+scrub out on $ext_if inet proto tcp from ($ext_if) to any max-mss {mss}
 {vpn_nat}
 {extra_nat}rdr on $int_if inet proto udp from $int_if:network to any port 53 -> {lan_ip}
 rdr on $int_if inet proto tcp from $int_if:network to any port 53 -> {lan_ip}
@@ -889,6 +891,12 @@ mod tests {
         ));
         assert!(rules
             .contains("nat on $ext_if inet from $int_if:network to any -> ($ext_if) static-port"));
+        assert!(rules.contains(
+            "scrub in on $int_if inet proto tcp from $int_if:network to any no-df max-mss 1400"
+        ));
+        assert!(rules
+            .contains("scrub out on $ext_if inet proto tcp from ($ext_if) to any max-mss 1400"));
+        assert!(!rules.contains("from $int_if:network to any max-mss"));
         assert!(!rules.contains("tunshare_bypass"));
         assert!(!rules.contains("route-to"));
         assert!(!rules.contains("rdr-anchor"));
@@ -914,8 +922,11 @@ mod tests {
             "pass in quick on $int_if route-to ($wan_if $wan_gw) inet from $int_if:network to <tunshare_bypass> keep state"
         ));
         assert!(rules.contains(
-            "scrub out on $wan_if inet proto tcp from $int_if:network to any max-mss 1400"
+            "scrub in on $int_if inet proto tcp from $int_if:network to ! <tunshare_bypass> no-df max-mss 1400"
         ));
+        assert!(rules
+            .contains("scrub out on $ext_if inet proto tcp from ($ext_if) to any max-mss 1400"));
+        assert!(!rules.contains("scrub out on $wan_if"));
         assert!(!rules.contains("to <tunshare_bypass> route-to"));
         assert!(!rules.contains("route-to ($int_if"));
     }
