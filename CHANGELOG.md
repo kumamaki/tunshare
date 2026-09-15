@@ -7,6 +7,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+- MAIN now has `scrub-anchor` for `com.tunshare`. Filter `anchor` never ran the MSS clamp, so fat TLS still RST until that hook existed.
+
 ## [0.4.0] - 2026-09-15
 
 ### Added

@@ -1,9 +1,9 @@
 //! Packet filter (pf) firewall management.
 //!
-//! Sharing NAT / rdr / filter live in the named anchor `com.tunshare`.
-//! MAIN only has the six hook lines so a later `pfctl -Fr` (filters) or
-//! a VPN Network Extension rewrite cannot silently drop `route-to` while
-//! leaving WAN NAT in place. Health re-merges the hooks.
+//! Sharing NAT / rdr / filter / scrub live in the named anchor `com.tunshare`.
+//! MAIN only has the hook lines so a later `pfctl -Fr` (filters) or a VPN
+//! Network Extension rewrite cannot silently drop `route-to` or skip
+//! MSS clamp while leaving WAN NAT in place. Health re-merges the hooks.
 
 use crate::error::{Result, TunshareError};
 use crate::system::run_cmd;
@@ -22,7 +22,10 @@ pub const ANCHOR_NAME: &str = "com.tunshare";
 pub const NATPMP_ANCHOR: &str = "com.tunshare/natpmp";
 
 /// MAIN hooks. Child `/*` is required so nested `com.tunshare/natpmp` runs.
-const MAIN_HOOKS: [&str; 6] = [
+/// Scrub is its own MAIN section; filter `anchor` does not run it.
+const MAIN_HOOKS: [&str; 8] = [
+    "scrub-anchor \"com.tunshare\"",
+    "scrub-anchor \"com.tunshare/*\"",
     "nat-anchor \"com.tunshare\"",
     "nat-anchor \"com.tunshare/*\"",
     "rdr-anchor \"com.tunshare\"",
@@ -95,7 +98,7 @@ impl Firewall {
         }
     }
 
-    /// Six MAIN hook lines. Tests and merge share this list.
+    /// MAIN hook lines. Tests and merge share this list.
     pub fn main_hooks() -> &'static [&'static str] {
         &MAIN_HOOKS
     }
@@ -159,7 +162,7 @@ pass out quick on $ext_if inet from ($ext_if) to any keep state
         )
     }
 
-    /// MAIN fragment: skip lo0 plus the six hooks. Idempotent merge uses this
+    /// MAIN fragment: skip lo0 plus the hooks. Idempotent merge uses this
     /// after stripping leftover tunshare lines from a snapshot.
     pub fn generate_main_hooks() -> String {
         let mut out = String::from("set skip on lo0\n");
@@ -565,16 +568,22 @@ fn bucket_main_lines(existing: &str) -> MainBuckets {
 fn assemble_main(buckets: &MainBuckets, inject_hooks: bool) -> String {
     let mut out = buckets.options.clone();
     out.push_str(&buckets.scrub);
+    if inject_hooks {
+        for hook in &Firewall::main_hooks()[..2] {
+            out.push_str(hook);
+            out.push('\n');
+        }
+    }
     out.push_str(&buckets.queue);
     if inject_hooks {
-        for hook in &Firewall::main_hooks()[..4] {
+        for hook in &Firewall::main_hooks()[2..6] {
             out.push_str(hook);
             out.push('\n');
         }
     }
     out.push_str(&buckets.nat);
     if inject_hooks {
-        for hook in &Firewall::main_hooks()[4..] {
+        for hook in &Firewall::main_hooks()[6..] {
             out.push_str(hook);
             out.push('\n');
         }
@@ -647,7 +656,9 @@ fn is_tunshare_main_line(line: &str) -> bool {
 
 fn main_hooks_present(text: &str) -> bool {
     let lower = text.to_ascii_lowercase().replace('\'', "\"");
-    line_has(&lower, "nat-anchor", false)
+    line_has(&lower, "scrub-anchor", false)
+        && line_has(&lower, "scrub-anchor", true)
+        && line_has(&lower, "nat-anchor", false)
         && line_has(&lower, "nat-anchor", true)
         && line_has(&lower, "rdr-anchor", false)
         && line_has(&lower, "rdr-anchor", true)
@@ -668,7 +679,10 @@ fn line_has(lower: &str, kind: &str, child: bool) -> bool {
 fn filter_hook(lower: &str, child: bool) -> bool {
     lower.lines().any(|line| {
         let line = line.trim();
-        if line.contains("nat-anchor") || line.contains("rdr-anchor") {
+        if line.contains("nat-anchor")
+            || line.contains("rdr-anchor")
+            || line.contains("scrub-anchor")
+        {
             return false;
         }
         if !line.contains("anchor") || !line.contains("com.tunshare") {
@@ -932,9 +946,11 @@ mod tests {
     }
 
     #[test]
-    fn main_hooks_are_six_and_named() {
+    fn main_hooks_are_eight_and_named() {
         let hooks = Firewall::main_hooks();
-        assert_eq!(hooks.len(), 6);
+        assert_eq!(hooks.len(), 8);
+        assert!(hooks.contains(&"scrub-anchor \"com.tunshare\""));
+        assert!(hooks.contains(&"scrub-anchor \"com.tunshare/*\""));
         assert!(hooks.contains(&"nat-anchor \"com.tunshare\""));
         assert!(hooks.contains(&"nat-anchor \"com.tunshare/*\""));
         assert!(hooks.contains(&"rdr-anchor \"com.tunshare\""));
@@ -943,6 +959,25 @@ mod tests {
         assert!(hooks.contains(&"anchor \"com.tunshare/*\""));
         let text = Firewall::generate_main_hooks();
         assert!(main_hooks_present(&text));
+        let line_at = |needle: &str| -> usize {
+            text.lines()
+                .scan(0usize, |offset, line| {
+                    let start = *offset;
+                    *offset += line.len() + 1;
+                    Some((start, line))
+                })
+                .find(|(_, line)| *line == needle)
+                .map(|(start, _)| start)
+                .unwrap_or_else(|| panic!("missing {needle}"))
+        };
+        assert!(line_at("scrub-anchor \"com.tunshare\"") < line_at("nat-anchor \"com.tunshare\""));
+        assert!(line_at("nat-anchor \"com.tunshare\"") < line_at("anchor \"com.tunshare\""));
+        let without_scrub = text
+            .lines()
+            .filter(|line| !line.contains("scrub-anchor"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!main_hooks_present(&without_scrub));
     }
 
     #[test]
@@ -995,12 +1030,17 @@ dummynet-anchor "com.apple/*"
                 .map(|(start, _)| start)
                 .unwrap_or_else(|| panic!("missing {needle}"))
         };
-        let scrub = line_at("scrub-anchor \"com.apple/*\" all");
+        let apple_scrub = line_at("scrub-anchor \"com.apple/*\" all");
+        let tunshare_scrub = line_at("scrub-anchor \"com.tunshare\"");
         let nat_hook = line_at("nat-anchor \"com.tunshare\"");
         let apple_nat = line_at("nat-anchor \"com.apple/*\"");
         let filter_hook = line_at("anchor \"com.tunshare\"");
         let apple_filter = line_at("anchor \"com.apple/*\"");
-        assert!(scrub < nat_hook, "scrub must precede translation");
+        assert!(apple_scrub < tunshare_scrub, "Apple scrub stays first");
+        assert!(
+            tunshare_scrub < nat_hook,
+            "tunshare scrub precedes translation"
+        );
         assert!(nat_hook < apple_nat);
         assert!(apple_nat < filter_hook);
         assert!(filter_hook < apple_filter);
