@@ -7,6 +7,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-15
+
 ### Added
 - LAN `:53` resolver. Clients always query this Mac. Blocklist NXDOMAINs ads. WAN bypass sends matching names out the WAN, not the VPN. Both stay off until you toggle them.
 - Per-source Domain filters. Custom URLs add and remove in the TUI. Extra builtins default off.
@@ -76,7 +78,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Debug overlay with live pf rules, NAT-PMP mappings, interface state.
 - Drop-safe cleanup of all firewall, IP forwarding, DHCP, and NAT-PMP state.
 
-[Unreleased]: https://github.com/kumamaki/tunshare/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/kumamaki/tunshare/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/kumamaki/tunshare/releases/tag/v0.4.0
 [0.3.0]: https://github.com/kumamaki/tunshare/releases/tag/v0.3.0
 [0.2.0]: https://github.com/kumamaki/tunshare/releases/tag/v0.2.0
 [0.1.0]: https://github.com/kumamaki/tunshare/releases/tag/v0.1.0
